@@ -5,6 +5,7 @@ use Lang;
 use Cms\Contracts\CmsObject as CmsObjectContract;
 use Cms\Helpers\File as FileHelper;
 use Winter\Storm\Extension\Extendable;
+use Winter\Storm\Halcyon\Datasource\FileDatasource;
 use ApplicationException;
 
 /**
@@ -101,6 +102,10 @@ class ComponentPartial extends Extendable implements CmsObjectContract
      */
     public static function loadOverrideCached($theme, $component, $fileName)
     {
+        if (!static::themeHasOverridesFor($theme, $component->alias)) {
+            return null;
+        }
+
         $partial = Partial::loadCached($theme, strtolower($component->alias) . '/' . $fileName);
 
         if ($partial === null) {
@@ -108,6 +113,52 @@ class ComponentPartial extends Extendable implements CmsObjectContract
         }
 
         return $partial;
+    }
+
+    /**
+     * Checks whether the theme has any partials in a directory named after the component alias, which is where
+     * overrides of the component's partials live.
+     *
+     * Halcyon never caches a lookup for a template that does not exist, so without this check every component
+     * partial rendered costs two uncached theme lookups, each with its own cache round trips and file system
+     * checks, even when the theme overrides nothing.
+     *
+     * Returns true when the theme's datasource cannot answer, so the overrides are looked up as before.
+     *
+     * @param \Cms\Classes\Theme $theme
+     * @param string $alias
+     * @return bool
+     */
+    protected static function themeHasOverridesFor($theme, $alias)
+    {
+        $directories = array_unique([strtolower($alias), $alias]);
+        $datasource = $theme->getDatasource();
+
+        if ($datasource instanceof FileDatasource) {
+            foreach ($directories as $directory) {
+                if (is_dir($theme->getPath() . '/partials/' . $directory)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($datasource instanceof AutoDatasource) {
+            foreach ($datasource->getPathCache() as $paths) {
+                foreach (array_keys($paths) as $path) {
+                    foreach ($directories as $directory) {
+                        if (str_starts_with($path, 'partials/' . $directory . '/')) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     /**
